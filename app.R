@@ -3,19 +3,48 @@ library(shinydashboard)
 library(dplyr)
 library(shinythemes)
 library(stringr)
+library(vistime)
+library(plotly)
+library(ggthemes)
+library(countrycode)
 
-load("combined.Rdata")
-subtitle_text <- readRDS("subtitle.RDS")
-flag_choices <- readRDS("flags.RDS")
-sv <- read.csv("lists-Reefers-2022-11-11_04-40.csv")
+
+# load("combined.Rdata")
+load("data/ship_ids.Rdata")
+transshipments <- readRDS("data/dataset.RDS")
+port_visits <- readRDS("data/port.RDS")
+subtitle_text <- readRDS("data/subtitle.RDS")
+flag_choices <- readRDS("data/flags.RDS")
+sv <- read.csv("data/lists-Reefers-2022-11-11_04-40.csv")
+
+background_color <- "white"
+
+timeline_data <- data.frame(event = c("Event 1", "Event 2"), 
+                            start = c("2020-06-06", "2020-10-01"), 
+                            end = c("2020-10-01", "2020-12-31"), 
+                            group = "My Events")
 
 ## NATO
-nato_countries <- c("GER", "USA", "FRA")
+# nato_countries <- c("GER", "USA", "FRA")
+nato_countries <- read.csv(file = "data/nato_countries.csv")
+nato_countries <- nato_countries %>%
+  filter(CAT == "NATO") %>%
+  pull(CTR) %>%
+  unique()
 flag_list <- function(selection) {
   if(selection == "U.S.") return(c("USA"))
   if(selection == "NATO") return(nato_countries)
   if(selection == "Five Eyes") return(c("USA", "GBR", "NZA", "AUS", "CAN"))
   else return(flag_choices)
+}
+
+# utility function
+get_most_frequent_value <- function(df, column_name) {
+  ## helper function to return most frequent value from a column
+  return(df %>%
+    count(!!as.name(column_name)) %>%
+    slice(which.max(n)) %>%
+    pull(!!as.name(column_name)))
 }
 
 
@@ -33,6 +62,9 @@ sidebar <- dashboardSidebar(
     menuItem("Plot", icon = icon("bar-chart"), tabName = "plot"),
     menuItem("Parameters", icon = icon("cog"), tabName = "parameters"),
 
+    br(),
+    hr(),
+    br(),
     # filter vessels
     sliderInput(
       "year_range",
@@ -49,7 +81,7 @@ sidebar <- dashboardSidebar(
       "Minimum number of meetings by vessel",
       min = 0,
       max = 500,
-      value = 100,
+      value = 50,
       # sep = "",
       round = FALSE,
       animate = TRUE
@@ -59,7 +91,7 @@ sidebar <- dashboardSidebar(
       "Distance from shore (nm)",
       min = 0,
       max = 1400,
-      value = c(200, 250),
+      value = c(0, 1400),
       # sep = "",
       round = FALSE,
       animate = TRUE
@@ -130,12 +162,49 @@ body <- dashboardBody(
       )
     ),
     tabItem(
-      "plot"
+      "plot",
+      fluidRow(
+        column(
+          width = 3,
+          selectInput(
+            "vessel_mmsi",
+            "Support Vessel MMSI number",
+            choices = ship_mmsi,
+            multiple = FALSE,
+            selectize = TRUE,
+            selected = 371717000)
+        ),
+        column(
+          width = 6,
+          align = "center",
+          h1(textOutput("vessel_name"))),
+        column(
+          width = 3,
+          align = "right",
+          htmlOutput("vessel_flag"))
+      ),
+      fluidRow(
+        column(width = 3),
+        column(
+          width = 6,
+          uiOutput("description")
+        ),
+        column(width = 3)
+      ),
+      hr(),
+      h3("Activity"),
+      plotlyOutput(outputId = "history")
     ),
     tabItem(
-      "parameters"
+        "parameters"
     )
-  )
+  ),
+  tags$head(tags$style("#history{height:220px !important;}")),
+  tags$head(tags$style(HTML('
+                                /* logo */
+                                .content-wrapper {
+                                background-color: #ffffff;
+                                }')))
 )
 
 ui <- dashboardPage(header, sidebar, body, title = "Illegal Fishing")
@@ -143,8 +212,11 @@ ui <- dashboardPage(header, sidebar, body, title = "Illegal Fishing")
 
 
 server <- function(input, output) {
+
+  ## RANKING TAB
+
   generate_rankings2 <- reactive({
-    all_meetings <- rbind(encounter, loitering) %>%
+    all_meetings <- transshipments %>%
 
     # filter by date when the meeting occured
     mutate(start = as.Date(start)) %>%
@@ -302,7 +374,6 @@ server <- function(input, output) {
     handlerExpr = {
       output$rankingstable <- DT::renderDataTable(
         DT::datatable(
-          # data = generate_rankings(input, session, encounter, loitering)(),
           data = generate_rankings2(),
           options = list(pageLength = 10),
           rownames = FALSE)
@@ -343,7 +414,6 @@ server <- function(input, output) {
     handlerExpr = {
       output$rankingstable <- DT::renderDataTable(
         DT::datatable(
-          # data = generate_rankings(input, session, encounter, loitering)(),
           data = generate_rankings2(),
           options = list(pageLength = 10),
           rownames = FALSE)
@@ -396,7 +466,6 @@ server <- function(input, output) {
       )
       output$rankingstable <- DT::renderDataTable(
         DT::datatable(
-          # data = generate_rankings(input, session, encounter, loitering)(),
           data = port_data(),
           options = list(pageLength = 10),
           rownames = FALSE)
@@ -404,6 +473,187 @@ server <- function(input, output) {
       rv$table_shown <- "port"
     }
   )
+
+
+  ## PLOT TAB
+
+  # general function to get meeting data for one vessel
+  mmsi_data <- reactive({
+    df <- transshipments %>%
+      select(
+        type,
+        vessel.mmsi,
+        start,
+        end,
+        port.name,
+        port.country,
+        encounter.encountered_vessel.name,
+        encounter.encountered_vessel.flag,
+        vessel.name,
+        vessel.flag,
+        vessel.destination_port.country,
+        encounter.encountered_vessel.origin_port.country,
+        distance_from_shore_m
+      ) %>%
+      filter(vessel.mmsi == input$vessel_mmsi) %>%
+      mutate(
+        start = as.POSIXct(start),
+        end = as.POSIXct(end),
+        distance_from_shore = distance_from_shore_m / 1852,
+        Meeting_Type = ifelse(
+          type == "encounter",
+          "tracked",
+          "dark"),
+        port_country = countrycode(
+          vessel.destination_port.country,
+          "iso3c",
+          "country.name")
+      )
+  })
+
+  # general function to get meeting and port data for one vessel
+  mmsi_with_port <- reactive({
+    df <- port_visits %>%
+      select(
+        type,
+        vessel.mmsi,
+        start,
+        end,
+        port.name,
+        port.country,
+        encounter.encountered_vessel.name,
+        encounter.encountered_vessel.flag,
+        vessel.name,
+        vessel.flag,
+        vessel.destination_port.country,
+        encounter.encountered_vessel.origin_port.country,
+        distance_from_shore_m
+      ) %>%
+      filter(vessel.mmsi == input$vessel_mmsi) %>%
+      mutate(
+        start = as.POSIXct(start),
+        end = as.POSIXct(end),
+        distance_from_shore = distance_from_shore_m / 1852,
+        Meeting_Type = "",
+        port_country = ""
+      ) %>%
+      rbind(mmsi_data()) %>%
+      mutate(
+        Event = ifelse(
+          type == "port", "at port", ifelse(
+            type == "loitering", "dark meeting", ifelse(
+              type == "encounter", "tracked meeting", type
+            )
+          )
+        ),
+        event_description = paste0(
+              "<b>", Event, "</b><br>",
+              ifelse(
+                type == "port",
+                paste0(str_to_title(port.name), " in ", port.country),
+                ifelse(
+                  type == "encounter",
+                  paste0(
+                    "with ", str_to_title(encounter.encountered_vessel.name),
+                    ", flagged to ", encounter.encountered_vessel.flag),
+                  "with unknown fishing vessel"
+                )
+              ),
+              "<br>on ", format(start, "%b %d %Y at %H:%M"), " for ",
+              ifelse(
+                difftime(end, start, units = "hours") > 48,
+                paste0(round(difftime(end, start, units = "days")), " days"),
+                paste0(round(difftime(end, start, units = "hours")), " hours")
+              )
+            )
+      )
+  })
+
+  # header and description
+  description_values <- reactive({
+    mmsi_meetings <- mmsi_data()
+    desc <- list()
+    desc$vessel_name <- get_most_frequent_value(
+      mmsi_meetings, "vessel.name")
+    desc$vessel_flag <- get_most_frequent_value(
+      mmsi_meetings, "vessel.flag")
+    desc$vessel_country <- countrycode(
+      desc$vessel_flag, "iso3c", "country.name")
+    desc$vessel_port <- countrycode(
+      get_most_frequent_value(
+        mmsi_meetings, "vessel.destination_port.country"),
+      "iso3c", "country.name")
+    desc$vessel_dist <- mmsi_meetings$distance_from_shore %>%
+      median()
+    desc$vessel_enc_flag <- get_most_frequent_value(
+      mmsi_meetings, "encounter.encountered_vessel.flag")
+    desc$vessel_enc_port <- get_most_frequent_value(
+      mmsi_meetings, "encounter.encountered_vessel.origin_port.country")
+    desc
+  })
+
+  description_text <- reactive({
+    description <- description_values()
+    HTML(
+        paste0("<br>",
+        str_to_title(description$vessel_name),
+        " is a reefer vessel flagged to ", description$vessel_country,
+        " and most frequently visits ports in ", description$vessel_port,
+        ". <br><br>",
+        "Its median distance from shore during ",
+        "meetings with fishing vessels is ",
+        round(description$vessel_dist, 0), " nautical miles.<br><br>"
+      ))
+    })
+
+  output$vessel_name <- renderText(
+    description_values()$vessel_name
+  )
+
+  output$vessel_flag <- renderUI(
+    shinyflags::flag(
+      country = countrycode(description_values()$vessel_flag, "iso3c", "iso2c")
+    ))
+
+  output$description <- renderUI({
+    description_text()
+  })
+
+
+  # plot timeline graph
+  output$history <- plotly::renderPlotly({
+    df <- mmsi_with_port()
+    ggplotly(
+      p = ggplot(
+        df,
+        aes(
+          xmin = start,
+          xmax = end,
+          ymin = 1,
+          ymax = 2,
+          fill = Event,
+          hovertext = event_description
+        )) +
+      geom_rect() +
+      theme_wsj() +
+      theme(
+        legend.position = "right",
+        text = element_text(family = "mono"),
+        legend.title = element_text(size = 12),
+        legend.background = element_rect(fill = background_color),
+        plot.background = element_rect(fill = background_color),
+        panel.background = element_rect(fill = background_color),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.text.y = element_blank()) +
+      scale_fill_manual(values = c("dark meeting" = "#D95F02",
+                                "tracked meeting" = "#7570B3",
+                                "at port" = "lightgrey"))
+      ,
+      tooltip = df$event_description
+    )
+  })
 }
 
 # Run the application ----------------------------------------------
