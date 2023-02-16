@@ -59,7 +59,7 @@ sidebar <- dashboardSidebar(
     # Page Tabs
     menuItem("Home", icon = icon("home"), tabName = "home"),
     menuItem("Ranking", icon = icon("table"), tabName = "ranking"),
-    menuItem("Plot", icon = icon("bar-chart"), tabName = "plot"),
+    menuItem("Reefer Search", icon = icon("bar-chart"), tabName = "plot"),
     menuItem("Parameters", icon = icon("cog"), tabName = "parameters"),
 
     br(),
@@ -192,8 +192,29 @@ body <- dashboardBody(
         column(width = 3)
       ),
       hr(),
-      h3("Activity"),
-      plotlyOutput(outputId = "history")
+      h4("Activity"),
+      plotlyOutput(outputId = "history"),
+      hr(),
+      h4("Distance from shore during meetings"),
+      plotlyOutput("distplot"),
+      p("The area that lies within 200nm of the shore
+          underlies the respective country's jurisdiction."),
+      hr(),
+      fluidRow(
+        column(width = 9,
+          h4("Port visits")),
+        column(
+          width = 3,
+          selectInput(
+            "city_or_country",
+            "Plot by",
+            choices = c("Country", "City"),
+            multiple = FALSE,
+            selectize = TRUE,
+            selected = "Country")
+        )
+      ),
+      plotlyOutput("portplotcountry")
     ),
     tabItem(
         "parameters"
@@ -491,6 +512,7 @@ server <- function(input, output) {
         encounter.encountered_vessel.flag,
         vessel.name,
         vessel.flag,
+        vessel.destination_port.name,
         vessel.destination_port.country,
         encounter.encountered_vessel.origin_port.country,
         distance_from_shore_m
@@ -507,7 +529,9 @@ server <- function(input, output) {
         port_country = countrycode(
           vessel.destination_port.country,
           "iso3c",
-          "country.name")
+          "country.name"),
+        port_country = coalesce(port_country, "unknown"),
+        vessel.destination_port.name = coalesce(vessel.destination_port.name, "unknown")
       )
   })
 
@@ -525,6 +549,7 @@ server <- function(input, output) {
         encounter.encountered_vessel.flag,
         vessel.name,
         vessel.flag,
+        vessel.destination_port.name,
         vessel.destination_port.country,
         encounter.encountered_vessel.origin_port.country,
         distance_from_shore_m
@@ -634,25 +659,131 @@ server <- function(input, output) {
           fill = Event,
           hovertext = event_description
         )) +
-      geom_rect() +
+        geom_rect() +
+        theme_wsj() +
+        theme(
+          legend.position = "right",
+          legend.background = element_rect(fill = background_color),
+          plot.background = element_rect(fill = background_color),
+          panel.background = element_rect(fill = background_color),
+          panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank(),
+          axis.ticks.y = element_blank(),
+          axis.text.y = element_blank()) +
+        scale_fill_manual(
+          name = "",
+          values = c(
+            "dark meeting" = "#D95F02",
+            "tracked meeting" = "#7570B3",
+            "at port" = "lightgrey"))
+      ,
+      tooltip = df$event_description
+    )
+  })
+
+  output$distplot <- plotly::renderPlotly({
+    df <- mmsi_data()
+    ggplotly(
+      p = ggplot(
+        data = df,
+        aes(x = distance_from_shore, fill = Meeting_Type)
+        ) +
+        geom_histogram(
+          binwidth = 25,
+          boundary = 0,
+          position = "stack"
+        ) +
+        geom_vline(
+          aes(xintercept = 200),
+          color = "black",
+          linetype = "dashed",
+          size = 0.5
+        ) +
+        xlim(0, max(800, max(df$distance_from_shore))) +
+        theme_wsj() +
+        xlab("Distance from shore during meeting") +
+        ylab("Frequency") +
+        labs(caption = "The area that lies within 200nm of the shore
+          underlies the respective country's jurisdiction.") +
+        theme(
+          legend.position = "right",
+          text = element_text(family = "mono"),
+          legend.background = element_rect(fill = background_color),
+          plot.background = element_rect(fill = background_color),
+          panel.background = element_rect(fill = background_color),
+          panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank(),
+          axis.ticks.y = element_blank(),
+          axis.text.y = element_blank()) +
+        coord_cartesian(xlim = c(0, max(800, max(df$distance_from_shore)))) +
+        scale_fill_manual(
+          name = "",
+          values = c("dark" = "#D95F02", "tracked" = "#7570B3")) +
+        scale_x_continuous(
+          labels = function(x) {
+            suf <- ifelse(x == 0, " nautical miles", " nm")
+            return(format(paste0(x, suf)))
+          }),
+      tooltip = "count"
+    )
+  })
+
+  port_plot <- reactive({
+    df <- mmsi_data()
+    if (input$city_or_country == "Country") {
+      p <- ggplot(
+        data = df,
+        aes(
+          x = port_country,
+          fill = Meeting_Type,
+          text = paste0(
+            "visited port after ",
+            sprintf("%0.0f", ..count..), " meetings")
+        )) +
+        xlab("Country where vessel headed after meetings")
+    } else {
+      p <- ggplot(
+        data = df,
+        aes(
+          x = vessel.destination_port.name,
+          fill = Meeting_Type,
+          text = paste0(
+            "visited port after ",
+            sprintf("%0.0f", ..count..), " meetings"))
+        ) +
+        xlab("Port where vessel headed after meetings")
+    }
+      p = p + geom_histogram(
+        boundary = 0,
+        position = "stack",
+        stat = "count"
+      ) +
+      ylab("Sum of meetings before heading to the port") +
       theme_wsj() +
       theme(
+        axis.text.x = element_text(angle = 90),
         legend.position = "right",
         text = element_text(family = "mono"),
-        legend.title = element_text(size = 12),
         legend.background = element_rect(fill = background_color),
         plot.background = element_rect(fill = background_color),
         panel.background = element_rect(fill = background_color),
         panel.grid.major = element_blank(),
-        panel.grid.minor = element_blank(),
+        panel.grid.minor = element_blank()#,
         axis.ticks.y = element_blank(),
-        axis.text.y = element_blank()) +
-      scale_fill_manual(values = c("dark meeting" = "#D95F02",
-                                "tracked meeting" = "#7570B3",
-                                "at port" = "lightgrey"))
-      ,
-      tooltip = df$event_description
+        axis.text.y = element_blank()
+      ) +
+      scale_fill_manual(
+          name = "",
+          values = c("dark" = "#D95F02", "tracked" = "#7570B3"))
+
+    ggplotly(
+      p = p,
+      tooltip = "text"
     )
+  })
+
+  output$portplotcountry <- renderPlotly({
+    port_plot()
   })
 }
 
