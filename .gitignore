@@ -41,3 +41,4 @@ vignettes/*.pdf
 # added
 .DS_Store
 *port.csv
+data/World_EEZ_v11_20191118

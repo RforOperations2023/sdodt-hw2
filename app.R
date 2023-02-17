@@ -15,7 +15,7 @@ transshipments <- readRDS("data/dataset.RDS")
 port_visits <- readRDS("data/port.RDS")
 subtitle_text <- readRDS("data/subtitle.RDS")
 flag_choices <- readRDS("data/flags.RDS")
-sv <- read.csv("data/lists-Reefers-2022-11-11_04-40.csv")
+sv <- read.csv("data/current_location.csv")
 
 background_color <- "white"
 
@@ -35,7 +35,7 @@ flag_list <- function(selection) {
   if(selection == "U.S.") return(c("USA"))
   if(selection == "NATO") return(nato_countries)
   if(selection == "Five Eyes") return(c("USA", "GBR", "NZA", "AUS", "CAN"))
-  else return(flag_choices)
+  else return(flag_choices[!flag_choices == ""])
 }
 
 # utility function
@@ -60,7 +60,6 @@ sidebar <- dashboardSidebar(
     menuItem("Home", icon = icon("home"), tabName = "home"),
     menuItem("Ranking", icon = icon("table"), tabName = "ranking"),
     menuItem("Reefer Search", icon = icon("bar-chart"), tabName = "plot"),
-    menuItem("Parameters", icon = icon("cog"), tabName = "parameters"),
 
     br(),
     hr(),
@@ -91,7 +90,7 @@ sidebar <- dashboardSidebar(
       "Distance from shore (nm)",
       min = 0,
       max = 1400,
-      value = c(0, 1400),
+      value = c(25, 1400),
       # sep = "",
       round = FALSE,
       animate = TRUE
@@ -124,29 +123,29 @@ body <- dashboardBody(
       ),
       br(),
       fluidRow(
-        valueBoxOutput("flag", width = 3),
-        valueBoxOutput("eez", width = 3),
-        valueBoxOutput("rfmo", width = 3),
-        valueBoxOutput("port", width = 3)
+        valueBoxOutput("flag", width = 4),
+        valueBoxOutput("eez", width = 4),
+        # valueBoxOutput("rfmo", width = 3),
+        valueBoxOutput("port", width = 4)
       ),
       fluidRow(
         column(
-          width = 3,
+          width = 4,
           align = "center",
           actionButton("show_flag", label = "show list")
         ),
         column(
-          width = 3,
+          width = 4,
           align = "center",
           actionButton("show_eez", label = "show list")
         ),
+        # column(
+        #   width = 4,
+        #   align = "center",
+        #   actionButton("show_rfmo", label = "show list")
+        # ),
         column(
-          width = 3,
-          align = "center",
-          actionButton("show_rfmo", label = "show list")
-        ),
-        column(
-          width = 3,
+          width = 4,
           align = "center",
           actionButton("show_port", label = "show list")
         )
@@ -215,9 +214,6 @@ body <- dashboardBody(
         )
       ),
       plotlyOutput("portplotcountry")
-    ),
-    tabItem(
-        "parameters"
     )
   ),
   tags$head(tags$style("#history{height:220px !important;}")),
@@ -311,9 +307,9 @@ server <- function(input, output) {
       "Number of dark meetings" = n_loitering,
       "Median distance from shore (nm)" = avg_distance,
       "Meetings" = total_meetings,
-      "Status" = Navigation.Status
+      "Status" = Navigation.Status,
+      "EEZ" = ISO_TER1
     )
-
   table_data
   })
 
@@ -321,7 +317,7 @@ server <- function(input, output) {
   rv <- reactiveValues(table_shown = "none")
 
   flag_data <- reactive({
-    generate_rankings2() %>%
+    df <- generate_rankings2() %>%
       select(
         "Flag",
         "Vessel Name",
@@ -367,7 +363,25 @@ server <- function(input, output) {
     }
   )
 
+  eez_data <- reactive({
+    df <- generate_rankings2() %>%
+      select(
+          "Flag",
+          "Vessel Name",
+          "Longitude",
+          "Latitude",
+          "Meetings",
+          "tracked",
+          "authorized",
+          "Status",
+          "EEZ"
+      ) %>%
+      filter(EEZ %in% flag_list(input$enforcer))
+  })
+
   output$eez <- renderValueBox({
+    num <- eez_data() %>%
+      nrow()
     eez_subtitle <- function(enforcer) {
       if (enforcer == "any country") {
         return(paste0("in any EEZ"))
@@ -378,13 +392,13 @@ server <- function(input, output) {
     if (rv$table_shown == "eez") {
       valueBox(
         subtitle = eez_subtitle(input$enforcer),
-        value = 1,
+        value = num,
         icon = icon("flag"),
         color = "yellow")
     } else {
       valueBox(
         subtitle = eez_subtitle(input$enforcer),
-        value = 1,
+        value = num,
         icon = icon("flag"),
         color = "light-blue")
     }
@@ -395,7 +409,7 @@ server <- function(input, output) {
     handlerExpr = {
       output$rankingstable <- DT::renderDataTable(
         DT::datatable(
-          data = generate_rankings2(),
+          data = eez_data(),
           options = list(pageLength = 10),
           rownames = FALSE)
       )
@@ -403,45 +417,45 @@ server <- function(input, output) {
     }
   )
 
-  output$rfmo <- renderValueBox({
-    rfmo_subtitle <- function(enforcer) {
-      if (enforcer == "any country") {
-        return(paste0("in any RFMO"))
-      } else {
-        if (enforcer == "U.S.") {
-          return(paste0("in RFMOs enforceable by the U.S."))
-        } else {
-          return(paste0("in RFMOs enforceable by ", input$enforcer))
-        }
-      }
-    }
-    if (rv$table_shown == "rfmo") {
-      valueBox(
-        subtitle = rfmo_subtitle(input$enforcer),
-        value = 1,
-        icon = icon("flag"),
-        color = "yellow")
-    } else {
-      valueBox(
-        subtitle = rfmo_subtitle(input$enforcer),
-        value = 1,
-        icon = icon("flag"),
-        color = "light-blue")
-    }
-  })
+  # output$rfmo <- renderValueBox({
+  #   rfmo_subtitle <- function(enforcer) {
+  #     if (enforcer == "any country") {
+  #       return(paste0("in any RFMO"))
+  #     } else {
+  #       if (enforcer == "U.S.") {
+  #         return(paste0("in RFMOs enforceable by the U.S."))
+  #       } else {
+  #         return(paste0("in RFMOs enforceable by ", input$enforcer))
+  #       }
+  #     }
+  #   }
+  #   if (rv$table_shown == "rfmo") {
+  #     valueBox(
+  #       subtitle = rfmo_subtitle(input$enforcer),
+  #       value = 1,
+  #       icon = icon("flag"),
+  #       color = "yellow")
+  #   } else {
+  #     valueBox(
+  #       subtitle = rfmo_subtitle(input$enforcer),
+  #       value = 1,
+  #       icon = icon("flag"),
+  #       color = "light-blue")
+  #   }
+  # })
 
-  observeEvent(
-    eventExpr = input$show_rfmo,
-    handlerExpr = {
-      output$rankingstable <- DT::renderDataTable(
-        DT::datatable(
-          data = generate_rankings2(),
-          options = list(pageLength = 10),
-          rownames = FALSE)
-      )
-      rv$table_shown <- "rfmo"
-    }
-  )
+  # observeEvent(
+  #   eventExpr = input$show_rfmo,
+  #   handlerExpr = {
+  #     output$rankingstable <- DT::renderDataTable(
+  #       DT::datatable(
+  #         data = generate_rankings2(),
+  #         options = list(pageLength = 10),
+  #         rownames = FALSE)
+  #     )
+  #     rv$table_shown <- "rfmo"
+  #   }
+  # )
 
   port_data <- reactive({
     generate_rankings2() %>%
@@ -453,12 +467,17 @@ server <- function(input, output) {
         "Meetings",
         "tracked",
         "authorized",
-        "Status"
+        "Status",
+        "EEZ"
       ) %>%
-      filter(Status == "5-Moored")
+      filter(EEZ %in% flag_list(input$enforcer)) %>%
+      filter(Status == "5-Moored") %>%
+      rename("Port Country" = EEZ)
   })
 
   output$port <- renderValueBox({
+    num <- port_data() %>%
+      nrow()
     port_subtitle <- function(enforcer) {
       if (enforcer == "any country") {
         return(paste0("at any port"))
@@ -467,13 +486,13 @@ server <- function(input, output) {
     if (rv$table_shown == "port") {
       valueBox(
         subtitle = port_subtitle(input$enforcer),
-        value = 1,
+        value = num,
         icon = icon("flag"),
         color = "yellow")
     } else {
       valueBox(
         subtitle = port_subtitle(input$enforcer),
-        value = 1,
+        value = num,
         icon = icon("flag"),
         color = "light-blue")
     }
@@ -768,7 +787,7 @@ server <- function(input, output) {
         plot.background = element_rect(fill = background_color),
         panel.background = element_rect(fill = background_color),
         panel.grid.major = element_blank(),
-        panel.grid.minor = element_blank()#,
+        panel.grid.minor = element_blank(),
         axis.ticks.y = element_blank(),
         axis.text.y = element_blank()
       ) +

@@ -35,7 +35,7 @@ saveRDS(choices, file = "data/flags.RDS")
 save(list = c("ship_mmsi"), file = "data/ship_ids.Rdata")
 
 
-subtitle = paste0(
+subtitle <- paste0(
   "Illegal fishing is a major ecological and humanitarian problem. ",
   "This portal aims to provide details on some of the largest offenders",
   ", so-called 'reefers'. <br><br>",
@@ -56,3 +56,30 @@ saveRDS(HTML(subtitle),
 
 ## download from https://www.nato.int/structur/AC/135/main/scripts/data/ncs_country_codes.txt
 nato_countries <- read.csv(file = "data/nato_countries.csv")
+
+
+
+library(sp)
+library(rworldmap)
+library(rgeos)
+# 39.494828, -74.235441
+r <- data.frame(long = c(-74.235441, 39.494828, -178.311660375408,-176.511660375408, -174.711660375408, -172.911660375408, -171.111660375408,-169.311660375408), 
+               lat = c(39.494828, -74.235441, 73.1088933113454, 73.1088933113454,73.1088933113454, 73.1088933113454, 73.1088933113454, 73.1088933113454))
+
+# or
+#r <- data.frame(long = c(-178.311660375408,-176.511660375408, -174.711660375408, -172.911660375408, -171.111660375408,-169.311660375408), 
+#                lat = c(73.1088933113454, 73.1088933113454,73.1088933113454, 73.1088933113454, 73.1088933113454, 73.1088933113454))
+
+r.pts <- sp::SpatialPoints(r)
+
+# download file from here: http://www.marineregions.org/download_file.php?fn=v9_20161021
+# put the zip file in your working directory: getwd()
+unzip('data/World_EEZ_v9_20161021.zip')
+
+# countriesSP <- rworldmap::getMap(resolution = "high")
+# or
+countriesSP <- rgdal::readOGR(dsn = "World_EEZ_v9_20161021", layer = "eez_boundaries")
+
+r.pts <- sp::SpatialPoints(r.pts, proj4string = sp::CRS(proj4string(countriesSP))) 
+indices <- over(r.pts, countriesSP)
+indices$MRGID_Ter1
