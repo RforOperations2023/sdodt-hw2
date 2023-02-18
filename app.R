@@ -7,6 +7,7 @@ library(vistime)
 library(plotly)
 library(ggthemes)
 library(countrycode)
+library(formattable)
 
 
 # load("combined.Rdata")
@@ -19,13 +20,7 @@ sv <- read.csv("data/current_location.csv")
 
 background_color <- "white"
 
-timeline_data <- data.frame(event = c("Event 1", "Event 2"), 
-                            start = c("2020-06-06", "2020-10-01"), 
-                            end = c("2020-10-01", "2020-12-31"), 
-                            group = "My Events")
-
 ## NATO
-# nato_countries <- c("GER", "USA", "FRA")
 nato_countries <- read.csv(file = "data/nato_countries.csv")
 nato_countries <- nato_countries %>%
   filter(CAT == "NATO") %>%
@@ -328,7 +323,13 @@ server <- function(input, output) {
         "authorized",
         "Status"
       ) %>%
-      filter(Flag %in% flag_list(input$enforcer))
+      filter(Flag %in% flag_list(input$enforcer)) %>%
+      mutate(
+        tracked = paste0(round(tracked * 100), " %"),
+        authorized = paste0(round(authorized * 100), " %"),
+        Longitude = round(Longitude, 2),
+        Latitude = round(Latitude, 2)
+      )
   })
 
   output$flag <- renderValueBox({
@@ -353,12 +354,14 @@ server <- function(input, output) {
     eventExpr = input$show_flag,
     handlerExpr = {
       output$rankingstable <- DT::renderDataTable(
-        DT::datatable(
-          # data = generate_rankings(input, session, encounter, loitering)(),
-          data = flag_data(),
-          options = list(pageLength = 10),
-          rownames = FALSE)
-      )
+        formattable(
+          flag_data(),
+          list(
+            `Meetings` = color_bar("#ff7f7f")
+          )) %>%
+          as.datatable(escape = FALSE,
+                      options = list(scrollX = TRUE),
+                      rownames = FALSE))
       rv$table_shown <- "flag"
     }
   )
@@ -376,7 +379,13 @@ server <- function(input, output) {
           "Status",
           "EEZ"
       ) %>%
-      filter(EEZ %in% flag_list(input$enforcer))
+      filter(EEZ %in% flag_list(input$enforcer)) %>%
+      mutate(
+        tracked = paste0(round(tracked * 100), " %"),
+        authorized = paste0(round(authorized * 100), " %"),
+        Longitude = round(Longitude, 2),
+        Latitude = round(Latitude, 2)
+      )
   })
 
   output$eez <- renderValueBox({
@@ -408,14 +417,19 @@ server <- function(input, output) {
     eventExpr = input$show_eez,
     handlerExpr = {
       output$rankingstable <- DT::renderDataTable(
-        DT::datatable(
-          data = eez_data(),
-          options = list(pageLength = 10),
-          rownames = FALSE)
-      )
+        formattable(
+          eez_data(),
+          list(
+            `Meetings` = color_bar("#ff7f7f")
+          )) %>%
+          as.datatable(escape = FALSE,
+                      options = list(scrollX = TRUE),
+                      rownames = FALSE))
       rv$table_shown <- "eez"
     }
   )
+
+  # This is a feature that I would like to add later.
 
   # output$rfmo <- renderValueBox({
   #   rfmo_subtitle <- function(enforcer) {
@@ -472,7 +486,13 @@ server <- function(input, output) {
       ) %>%
       filter(EEZ %in% flag_list(input$enforcer)) %>%
       filter(Status == "5-Moored") %>%
-      rename("Port Country" = EEZ)
+      rename("Port Country" = EEZ) %>%
+      mutate(
+        tracked = paste0(round(tracked * 100), " %"),
+        authorized = paste0(round(authorized * 100), " %"),
+        Longitude = round(Longitude, 2),
+        Latitude = round(Latitude, 2)
+      )
   })
 
   output$port <- renderValueBox({
@@ -501,15 +521,20 @@ server <- function(input, output) {
   observeEvent(
     eventExpr = input$show_port,
     handlerExpr = {
-      output$table_heading <- renderText(
-        "Vessels currently in port"
-      )
       output$rankingstable <- DT::renderDataTable(
-        DT::datatable(
-          data = port_data(),
-          options = list(pageLength = 10),
-          rownames = FALSE)
-      )
+        formattable(
+          port_data(),
+          list(
+            `Meetings` = color_bar("#ff7f7f")
+          )) %>%
+          as.datatable(escape = FALSE,
+                      options = list(scrollX = TRUE),
+                      rownames = FALSE))
+      #   DT::datatable(
+      #     data = port_data(),
+      #     options = list(pageLength = 10),
+      #     rownames = FALSE)
+      # )
       rv$table_shown <- "port"
     }
   )
@@ -550,7 +575,8 @@ server <- function(input, output) {
           "iso3c",
           "country.name"),
         port_country = coalesce(port_country, "unknown"),
-        vessel.destination_port.name = coalesce(vessel.destination_port.name, "unknown")
+        vessel.destination_port.name =
+          coalesce(vessel.destination_port.name, "unknown")
       )
   })
 
